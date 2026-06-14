@@ -6,10 +6,12 @@ import com.fitness.admin.common.result.PageResult;
 import com.fitness.admin.common.result.R;
 import com.fitness.admin.community.dto.CreateCommentRequest;
 import com.fitness.admin.community.dto.CreatePostRequest;
+import com.fitness.admin.community.dto.CreateReportRequest;
 import com.fitness.admin.community.dto.LikeRequest;
 import com.fitness.admin.community.dto.LikeResponse;
 import com.fitness.admin.community.dto.PostDetailResponse;
 import com.fitness.admin.community.service.MiniAppCommunityService;
+import com.fitness.admin.community.service.ReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +30,7 @@ import java.util.Map;
 public class MiniAppCommunityController extends BaseController {
 
     private final MiniAppCommunityService miniAppCommunityService;
+    private final ReportService reportService;
 
     @Operation(summary = "帖子列表")
     @GetMapping("/list")
@@ -77,6 +80,13 @@ public class MiniAppCommunityController extends BaseController {
     @PostMapping("/{postId}/comments")
     public R<Void> createComment(@PathVariable Long postId, @RequestBody CreateCommentRequest request) {
         miniAppCommunityService.createComment(postId, request);
+        return success();
+    }
+
+    @Operation(summary = "提交举报")
+    @PostMapping("/report")
+    public R<Void> createReport(@RequestBody CreateReportRequest request) {
+        reportService.createReport(request);
         return success();
     }
 }
