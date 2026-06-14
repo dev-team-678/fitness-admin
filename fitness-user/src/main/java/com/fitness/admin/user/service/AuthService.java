@@ -1,11 +1,14 @@
 package com.fitness.admin.user.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fitness.admin.common.enums.ResultCodeEnum;
 import com.fitness.admin.common.event.LoginEvent;
 import com.fitness.admin.common.exception.BizException;
 import com.fitness.admin.user.dto.LoginRequest;
 import com.fitness.admin.user.dto.LoginResponse;
 import com.fitness.admin.user.entity.AdminUser;
+import com.fitness.admin.user.mapper.AdminRoleQueryMapper;
 import com.fitness.admin.user.mapper.AdminUserMapper;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.hutool.crypto.digest.DigestUtil;
@@ -14,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 
 @Service
@@ -21,7 +25,11 @@ import java.util.List;
 public class AuthService {
 
     private final AdminUserMapper adminUserMapper;
+    private final AdminRoleQueryMapper adminRoleQueryMapper;
     private final ApplicationEventPublisher eventPublisher;
+
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
+    private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {};
 
     public LoginResponse login(LoginRequest request, HttpServletRequest httpRequest) {
         String ip = getClientIp(httpRequest);
@@ -122,10 +130,46 @@ public class AuthService {
         userInfo.setUsername(user.getUsername());
         userInfo.setNickname(user.getNickname());
         userInfo.setAvatar(user.getAvatar());
-        
-        // 超级管理员拥有所有权限
-        userInfo.setPermissions(List.of("*"));
-        
+
+        // 根据角色查询真实权限
+        userInfo.setPermissions(resolvePermissions(user.getRoleId()));
+
         return userInfo;
+    }
+
+    /**
+     * 根据角色 ID 查询权限列表。
+     * roleId 为空或角色不存在时返回空列表；
+     * super_admin 角色返回通配符 ["*"]。
+     */
+    private List<String> resolvePermissions(Long roleId) {
+        if (roleId == null) {
+            return Collections.emptyList();
+        }
+        String raw = adminRoleQueryMapper.selectPermissionsByRoleId(roleId);
+        if (raw == null || raw.isBlank()) {
+            return Collections.emptyList();
+        }
+        try {
+            List<String> perms = JSON_MAPPER.readValue(raw, STRING_LIST_TYPE);
+            // 如果权限列表中包含通配符，直接返回 ["*"]
+            if (perms != null && perms.contains("*")) {
+                return List.of("*");
+            }
+            return perms != null ? perms : Collections.emptyList();
+        } catch (Exception e) {
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 供 StpInterface 实现调用：根据用户 ID 获取权限列表。
+     */
+    public List<String> getPermissionsByUserId(Long userId) {
+        AdminUser user = adminUserMapper.selectById(userId);
+        if (user == null) {
+            return Collections.emptyList();
+        }
+        return resolvePermissions(user.getRoleId());
     }
 }
