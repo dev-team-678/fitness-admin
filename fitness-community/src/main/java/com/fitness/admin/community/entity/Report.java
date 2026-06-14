@@ -2,6 +2,7 @@ package com.fitness.admin.community.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fitness.admin.common.base.BaseEntity;
+import com.fitness.admin.common.enums.ReportStatusEnum;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -16,7 +17,7 @@ public class Report extends BaseEntity {
     private String reason;
     private String description;
     private String images;
-    private Integer status;
+    private ReportStatusEnum status;
     private String handleResult;
     private Long handlerId;
 }

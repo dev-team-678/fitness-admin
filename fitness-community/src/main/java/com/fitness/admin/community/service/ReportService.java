@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fitness.admin.common.enums.ReportStatusEnum;
 import com.fitness.admin.common.exception.BizException;
 import com.fitness.admin.common.utils.SecurityUtil;
 import com.fitness.admin.community.dto.CreateReportRequest;
@@ -34,9 +35,9 @@ public class ReportService {
      * reason 写入 handle_result;handlerId 写入 handler_id。
      */
     public void handle(Long id, String action, String reason, Long handlerId) {
-        Integer status = switch (action == null ? "" : action) {
-            case "confirmed" -> 1;
-            case "dismissed" -> 2;
+        ReportStatusEnum status = switch (action == null ? "" : action) {
+            case "confirmed" -> ReportStatusEnum.CONFIRMED;
+            case "dismissed" -> ReportStatusEnum.DISMISSED;
             default -> throw new IllegalArgumentException("action 仅支持 confirmed / dismissed");
         };
         Report report = new Report();
@@ -97,7 +98,7 @@ public class ReportService {
         report.setReason(request.getReason());
         report.setDescription(request.getDescription());
         report.setImages(imagesJson);
-        report.setStatus(0); // 0=待处理
+        report.setStatus(ReportStatusEnum.PENDING); // 待处理
         report.setCreatedAt(LocalDateTime.now());
         report.setUpdatedAt(LocalDateTime.now());
         reportMapper.insert(report);
