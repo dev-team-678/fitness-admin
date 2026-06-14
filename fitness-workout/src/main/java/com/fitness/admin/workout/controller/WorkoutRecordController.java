@@ -1,6 +1,7 @@
 package com.fitness.admin.workout.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fitness.admin.common.base.BaseController;
 import com.fitness.admin.common.result.PageResult;
@@ -11,16 +12,21 @@ import com.fitness.admin.workout.entity.WorkoutLog;
 import com.fitness.admin.workout.service.WorkoutRecordService;
 import com.fitness.admin.workout.vo.ExercisePopularityVO;
 import com.fitness.admin.workout.vo.PlanFunnelVO;
+import com.fitness.admin.workout.vo.WorkoutLogExportVO;
 import com.fitness.admin.workout.vo.WorkoutOverviewVO;
 import com.fitness.admin.workout.vo.WorkoutPeakHoursVO;
 import com.fitness.admin.workout.vo.WorkoutTrendVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Tag(name = "训练记录管理")
@@ -67,5 +73,19 @@ public class WorkoutRecordController extends BaseController {
     @GetMapping("/plan-funnel")
     public R<PlanFunnelVO> planFunnel(AnalyticsQueryDTO queryDTO) {
         return success(workoutRecordService.getPlanFunnel(queryDTO));
+    }
+
+    @Operation(summary = "导出训练记录")
+    @GetMapping("/export")
+    public void export(WorkoutQueryDTO queryDTO, HttpServletResponse response) throws IOException {
+        String fileName = URLEncoder.encode("训练记录", StandardCharsets.UTF_8).replaceAll("\\+", "%20");
+        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.setCharacterEncoding("utf-8");
+        response.setHeader("Content-Disposition", "attachment;filename=" + fileName + ".xlsx");
+
+        List<WorkoutLogExportVO> data = workoutRecordService.queryExportList(queryDTO);
+        EasyExcel.write(response.getOutputStream(), WorkoutLogExportVO.class)
+                .sheet("训练记录")
+                .doWrite(data);
     }
 }

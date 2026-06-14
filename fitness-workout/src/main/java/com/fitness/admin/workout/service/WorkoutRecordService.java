@@ -12,6 +12,7 @@ import com.fitness.admin.content.mapper.ExerciseMapper;
 import com.fitness.admin.workout.mapper.WorkoutLogMapper;
 import com.fitness.admin.workout.vo.ExercisePopularityVO;
 import com.fitness.admin.workout.vo.PlanFunnelVO;
+import com.fitness.admin.workout.vo.WorkoutLogExportVO;
 import com.fitness.admin.workout.vo.WorkoutOverviewVO;
 import com.fitness.admin.workout.vo.WorkoutPeakHoursVO;
 import com.fitness.admin.workout.vo.WorkoutTrendVO;
@@ -57,6 +58,54 @@ public class WorkoutRecordService {
 
         wrapper.orderByDesc(WorkoutLog::getWorkoutDate);
         return workoutLogMapper.selectPage(page, wrapper);
+    }
+
+    /**
+     * 导出训练记录（不分页，最多导出 5000 条）。
+     */
+    public List<WorkoutLogExportVO> queryExportList(WorkoutQueryDTO queryDTO) {
+        LambdaQueryWrapper<WorkoutLog> wrapper = new LambdaQueryWrapper<>();
+        if (queryDTO.getUserId() != null) {
+            wrapper.eq(WorkoutLog::getUserId, queryDTO.getUserId());
+        }
+        if (queryDTO.getStartDate() != null) {
+            wrapper.ge(WorkoutLog::getWorkoutDate, queryDTO.getStartDate());
+        }
+        if (queryDTO.getEndDate() != null) {
+            wrapper.le(WorkoutLog::getWorkoutDate, queryDTO.getEndDate());
+        }
+        wrapper.orderByDesc(WorkoutLog::getWorkoutDate).last("LIMIT 5000");
+        List<WorkoutLog> logs = workoutLogMapper.selectList(wrapper);
+
+        List<WorkoutLogExportVO> result = new ArrayList<>();
+        for (WorkoutLog log : logs) {
+            WorkoutLogExportVO vo = new WorkoutLogExportVO();
+            vo.setId(log.getId());
+            vo.setUserId(log.getUserId());
+            vo.setWorkoutDate(log.getWorkoutDate());
+            vo.setStartTime(log.getStartTime());
+            vo.setEndTime(log.getEndTime());
+            vo.setDurationMin(log.getDurationMin());
+            vo.setTotalVolumeKg(log.getTotalVolumeKg());
+            vo.setTotalSets(log.getTotalSets());
+            vo.setEstimatedCalories(log.getEstimatedCalories());
+            vo.setStatus(statusLabel(log.getStatus()));
+            vo.setNotes(log.getNotes());
+            vo.setFeelingScore(log.getFeelingScore());
+            vo.setRpe(log.getRpe());
+            result.add(vo);
+        }
+        return result;
+    }
+
+    private static String statusLabel(String status) {
+        if (status == null) return "未知";
+        return switch (status) {
+            case "completed" -> "已完成";
+            case "in_progress" -> "进行中";
+            case "cancelled" -> "已取消";
+            default -> status;
+        };
     }
 
     public WorkoutOverviewVO getOverview(AnalyticsQueryDTO queryDTO) {
