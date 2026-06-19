@@ -8,8 +8,9 @@ spring:
       config:
         server-addr: ${NACOS_SERVER:127.0.0.1:8848}
         namespace: ${NACOS_NAMESPACE:fitness-admin}
-        username: ${NACOS_USERNAME:nacos}
-        password: ${NACOS_PASSWORD:nacos}
+        # Nacos 未启用鉴权时(默认),不传 username/password 避免 Nacos 拒绝空凭据
+        username: ${NACOS_USERNAME:}
+        password: ${NACOS_PASSWORD:}
         group: DEFAULT_GROUP
         file-extension: yaml
         refresh-enabled: true

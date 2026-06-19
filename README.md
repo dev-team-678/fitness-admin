@@ -22,7 +22,7 @@
 
 - JDK 17
 - Maven 3.8 及以上
-- 可选：Docker / Docker Compose（`docker/docker-compose.yml`）
+- 可选：Docker / Docker Compose（`docker/docker-compose.yml` + `docker/server/docker-compose.yml`）
 
 ## 本地构建
 
@@ -51,7 +51,10 @@ mvn -pl fitness-admin-app spring-boot:run
 
 ## Docker 支持
 
-若需要使用 Docker 进行本地联调，可参考 `docker/docker-compose.yml` 和 `docker/Dockerfile`。
+- `docker/docker-compose.yml`:启动 `fitness-admin` 自身;依赖 `fitness-infra` 外部网络与 `docker/server/docker-compose.yml` 中的服务互通。
+- `docker/server/docker-compose.yml`:启动 `nacos` + `qdrant` 两个依赖服务,共享 `fitness-infra` 网络。
+- mysql / redis / nginx 由宿主直接安装,不纳入容器编排。
+- `docker/Dockerfile`:构建 `fitness-admin` 镜像。
 
 ## 代码规范
 

@@ -51,20 +51,37 @@ public class NacosConfigPublisher {
     @Value("${spring.cloud.nacos.config.group:DEFAULT_GROUP}")
     private String group;
 
-    @Value("${spring.cloud.nacos.config.username:nacos}")
+    @Value("${spring.cloud.nacos.config.username:}")
     private String username;
 
-    @Value("${spring.cloud.nacos.config.password:nacos}")
+    @Value("${spring.cloud.nacos.config.password:}")
     private String password;
+
+    /**
+     * 拼接 Nacos Open API URL。Nacos 未启用鉴权时(username/password 都为空),
+     * 强制不携带凭据,避免 Nacos 把空 password 视作错误凭据返回 403/500。
+     * Nacos 启用鉴权时,需在 application.yml / env 里把 nacos.username / nacos.password 配齐。
+     */
+    private String buildUrl() {
+        StringBuilder sb = new StringBuilder("http://")
+                .append(serverAddr)
+                .append("/v1/cs/configs?dataId=").append(AI_DATA_ID)
+                .append("&group=").append(group)
+                .append("&tenant=").append(namespace);
+        if (username != null && !username.isBlank()
+                && password != null && !password.isBlank()) {
+            sb.append("&username=").append(username);
+            sb.append("&password=").append(password);
+        }
+        return sb.toString();
+    }
 
     /**
      * 推送 ai 配置到 Nacos。返回 true 表示 Nacos 接受并已下发刷新事件。
      */
     public boolean publishAiConfig(Map<String, Object> aiConfigMap) {
         String yaml = toYaml(aiConfigMap);
-        String url = String.format(
-                "http://%s/v1/cs/configs?dataId=%s&group=%s&tenant=%s&username=%s&password=%s",
-                serverAddr, AI_DATA_ID, group, namespace, username, password);
+        String url = buildUrl();
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -89,9 +106,7 @@ public class NacosConfigPublisher {
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> getAiConfig() {
-        String url = String.format(
-                "http://%s/v1/cs/configs?dataId=%s&group=%s&tenant=%s&username=%s&password=%s",
-                serverAddr, AI_DATA_ID, group, namespace, username, password);
+        String url = buildUrl();
         try {
             ResponseEntity<String> resp = restTemplate.getForEntity(url, String.class);
             if (!resp.getStatusCode().is2xxSuccessful()) {
