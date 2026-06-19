@@ -41,8 +41,13 @@ public class StartupEnvValidator implements ApplicationListener<ApplicationEnvir
     }
 
     private void validateMysqlPassword(ConfigurableEnvironment env, String profile) {
-        String password = env.getProperty("spring.datasource.password", "");
-        String username = env.getProperty("spring.datasource.username", "");
+        // 直接读原始环境变量,而非 spring.datasource.password。
+        // 原因: Spring Cloud Bootstrap 上下文的 ApplicationEnvironmentPreparedEvent
+        // 触发时 application.yml/application-prod.yml 尚未加载,spring.datasource.password
+        // 属性不存在,getProperty 会返回默认值 "" 导致误判。
+        // MYSQL_PASSWORD 等原始环境变量在 Bootstrap 和主上下文中都可见。
+        String password = env.getProperty("MYSQL_PASSWORD", "");
+        String username = env.getProperty("MYSQL_USER", "");
 
         for (String forbidden : FORBIDDEN_MYSQL_PASSWORDS) {
             if (forbidden.equals(password)) {
@@ -54,7 +59,7 @@ public class StartupEnvValidator implements ApplicationListener<ApplicationEnvir
     }
 
     private void validateAiApiKey(ConfigurableEnvironment env, String profile) {
-        String apiKey = env.getProperty("ai.api-key", "");
+        String apiKey = env.getProperty("AI_API_KEY", "");
         if (apiKey == null || apiKey.trim().isEmpty()) {
             if ("prod".equals(profile) || "production".equals(profile)) {
                 throw new IllegalStateException(
@@ -65,7 +70,7 @@ public class StartupEnvValidator implements ApplicationListener<ApplicationEnvir
     }
 
     private void validateQiniuSecretKey(ConfigurableEnvironment env, String profile) {
-        String secretKey = env.getProperty("qiniu.secret-key", "");
+        String secretKey = env.getProperty("QINIU_SECRET_KEY", "");
         if (secretKey == null || secretKey.trim().isEmpty()) {
             if ("prod".equals(profile) || "production".equals(profile)) {
                 throw new IllegalStateException(
