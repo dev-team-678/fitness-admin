@@ -2,14 +2,22 @@ package com.fitness.admin.ai.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * AI服务配置
+ *
+ * <p>由 Nacos dataId <code>fitness-admin-ai.yaml</code> 注入,所有 ai.* 字段支持热刷新。
+ * 字段命名保持 kebab-case → camelCase 映射(application.yml / Nacos 用前者,Java 用后者)。
  */
 @Data
 @Component
 @ConfigurationProperties(prefix = "ai")
+@RefreshScope
 public class AiConfig {
 
     /**
@@ -103,6 +111,37 @@ public class AiConfig {
      * Embedding 维度,需与 Qdrant collection 一致; DashScope text-embedding-v3 最大 1024
      */
     private Integer embeddingDimension = 1024;
+
+    /**
+     * Rerank 开关(预留)。Rerank 服务暂未实现,字段先存,后续接入 CoHere / 阿里云通用排序。
+     */
+    private Boolean ragRerankEnabled = false;
+
+    /**
+     * RAG 知识来源白名单,仅索引列表内的 source。空列表 = 索引全部。
+     * 可选值: exercise / nutrition / training / recovery / faq
+     */
+    private List<String> ragKnowledgeSources = new ArrayList<>();
+
+    /**
+     * 单用户每日对话上限,0 表示不限制。
+     */
+    private Integer dailyChatLimit = 100;
+
+    /**
+     * 单用户每日计划生成上限,0 表示不限制。
+     */
+    private Integer dailyPlanLimit = 10;
+
+    /**
+     * 单日 Token 总量上限(全局),0 表示不限制。
+     */
+    private Long maxTokensPerDay = 0L;
+
+    /**
+     * 异步 AI 调用的并发上限,超过则排队。
+     */
+    private Integer concurrencyLimit = 10;
 
     /**
      * Qdrant gRPC 地址,如 localhost:6334

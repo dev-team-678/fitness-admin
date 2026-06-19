@@ -1,0 +1,52 @@
+# 依赖服务: qdrant + nacos
+# mysql / redis / nginx 由宿主/外部直接安装,不纳入容器编排。
+#
+# 启动: docker compose -f docker/server/docker-compose.yml up -d
+#
+# 网络:
+#   - 服务跑在 fitness-infra 桥接网络,与 fitness-admin-app 共用同一网络即可互通
+#   - mysql/redis 走宿主机地址访问,不在本编排内
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.10.0
+    container_name: fitness-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/opt/qdrant/storage
+      - ./qdrant/config.yaml:/qdrant/config/production.yml:ro
+    networks:
+      - fitness-infra
+
+  # Nacos 配置中心(standalone 模式,本地开发/单机部署)
+  # 控制台: http://<host>:8848/nacos  默认账号 nacos/nacos(可在 env 里覆盖)
+  nacos:
+    image: nacos/nacos-server:v2.4.0
+    container_name: fitness-nacos
+    restart: unless-stopped
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    environment:
+      - MODE=standalone
+      - JVM_XMS=512m
+      - JVM_XMX=512m
+      - JVM_XMN=256m
+      - SPRING_DATASOURCE_PLATFORM=derby
+    volumes:
+      - nacos_data:/home/nacos/data
+      - nacos_logs:/home/nacos/logs
+    networks:
+      - fitness-infra
+
+volumes:
+  qdrant_storage:
+  nacos_data:
+  nacos_logs:
+
+networks:
+  fitness-infra:
+    driver: bridge

@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: fitness-admin
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  cloud:
+    nacos:
+      config:
+        server-addr: ${NACOS_SERVER:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:fitness-admin}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:nacos}
+        group: DEFAULT_GROUP
+        file-extension: yaml
+        refresh-enabled: true
+        extension-configs:
+          - data-id: fitness-admin-ai.yaml
+            group: DEFAULT_GROUP
+            refresh: true

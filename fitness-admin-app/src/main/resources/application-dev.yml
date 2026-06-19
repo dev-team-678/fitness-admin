@@ -39,6 +39,8 @@ wx:
     token: ${WX_TOKEN:}
     aes-key: ${WX_AES_KEY:}
 
+# dev 环境 AI 配置完整默认值(等同 Nacos fitness-admin-ai.yaml 的本地兜底)。
+# 启动时 Nacos 会按扩展 dataId 覆盖同名 key,这里仅作 Nacos 不可达时的兜底。
 ai:
   provider: ${AI_PROVIDER:openai}
   api-key: ${AI_API_KEY:}
@@ -60,6 +62,17 @@ ai:
   rag-min-score: ${AI_RAG_MIN_SCORE:0.6}
   chunk-size: ${AI_CHUNK_SIZE:500}
   chunk-overlap: ${AI_CHUNK_OVERLAP:50}
+  rag-rerank-enabled: false
+  rag-knowledge-sources:
+    - exercise
+    - nutrition
+    - training
+    - recovery
+    - faq
+  daily-chat-limit: 100
+  daily-plan-limit: 10
+  max-tokens-per-day: 0
+  concurrency-limit: 10
 
 logging:
   level:
