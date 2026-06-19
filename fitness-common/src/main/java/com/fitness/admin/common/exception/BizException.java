@@ -22,4 +22,9 @@ public class BizException extends RuntimeException {
         super(resultCodeEnum.getMessage());
         this.code = resultCodeEnum.getCode();
     }
+
+    public BizException(ResultCodeEnum resultCodeEnum, String message) {
+        super(message);
+        this.code = resultCodeEnum.getCode();
+    }
 }

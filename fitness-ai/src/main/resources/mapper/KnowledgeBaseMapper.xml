@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.fitness.admin.ai.mapper.KnowledgeBaseMapper">
+
+    <select id="selectExportList" resultType="com.fitness.admin.ai.entity.KnowledgeBase">
+        SELECT
+            id, category, title, content, tags, source,
+            vector_status, vector_id, vector_model, vector_indexed_at, vector_error,
+            status, created_at, updated_at
+        FROM knowledge_base
+        ${ew.customSqlSegment}
+    </select>
+
+</mapper>
