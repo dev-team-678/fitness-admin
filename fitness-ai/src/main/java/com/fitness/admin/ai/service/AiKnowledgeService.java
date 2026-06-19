@@ -249,6 +249,7 @@ public class AiKnowledgeService {
 
     private List<KnowledgeImportRow> parseExcel(MultipartFile file) throws Exception {
         List<KnowledgeImportRow> result = new ArrayList<>();
+        // headRowNumber=1 跳过表头,自动按 @ExcelProperty 映射列名
         EasyExcel.read(file.getInputStream(), KnowledgeImportRow.class,
                 new com.alibaba.excel.read.listener.ReadListener<KnowledgeImportRow>() {
                     @Override
@@ -259,7 +260,7 @@ public class AiKnowledgeService {
                     public void doAfterAllAnalysed(com.alibaba.excel.context.AnalysisContext ctx) {
                         // no-op
                     }
-                }).sheet().doRead();
+                }).headRowNumber(1).sheet().doRead();
         return result;
     }
 
