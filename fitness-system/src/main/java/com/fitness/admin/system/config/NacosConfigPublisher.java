@@ -7,6 +7,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -38,6 +41,7 @@ public class NacosConfigPublisher {
     public static final String AI_DATA_ID = "fitness-admin-ai.yaml";
 
     private final ObjectMapper objectMapper;
+    private final Environment environment;
 
     @Qualifier("nacosRestTemplate")
     private final RestTemplate restTemplate;
@@ -65,7 +69,7 @@ public class NacosConfigPublisher {
     private String buildUrl() {
         StringBuilder sb = new StringBuilder("http://")
                 .append(serverAddr)
-                .append("/v1/cs/configs?dataId=").append(AI_DATA_ID)
+                .append("/nacos/v1/cs/configs?dataId=").append(AI_DATA_ID)
                 .append("&group=").append(group)
                 .append("&tenant=").append(namespace);
         if (username != null && !username.isBlank()
@@ -102,7 +106,8 @@ public class NacosConfigPublisher {
     }
 
     /**
-     * 从 Nacos 拉取 ai 配置。Nacos 不可达时抛 BizException,前端弹错。
+     * 从 Nacos 拉取 ai 配置。配置不存在时返回空 map(首次使用尚未保存),
+     * Nacos 不可达时抛 BizException,前端弹错。
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> getAiConfig() {
@@ -122,6 +127,9 @@ public class NacosConfigPublisher {
                 return (Map<String, Object>) ai;
             }
             return new LinkedHashMap<>();
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            log.info("Nacos 配置不存在(首次使用尚未保存),回退本地配置: dataId={}", AI_DATA_ID);
+            return buildFallbackMap();
         } catch (RestClientException e) {
             log.error("调用 Nacos Open API 失败", e);
             throw new BizException("Nacos 不可达: " + e.getMessage());
@@ -144,5 +152,55 @@ public class NacosConfigPublisher {
         }
         wrapper.put("ai", filtered);
         return yaml.dump(wrapper);
+    }
+
+    /**
+     * Nacos 配置不存在时,从 Spring Environment 读取当前生效的 ai.* 属性构建回退 map,
+     * 让前端展示 application.yml 里的默认配置而非空白表单。
+     * Binder 读出的 key 为 kebab-case(Spring Boot YAML 惯例),需转为前端期望的 camelCase。
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> buildFallbackMap() {
+        try {
+            Binder binder = Binder.get(environment);
+            Map<String, Object> raw = binder.bind("ai", Bindable.of(Map.class))
+                    .orElseGet(LinkedHashMap::new);
+            Map<String, Object> result = new LinkedHashMap<>();
+            raw.forEach((key, value) -> result.put(kebabToCamel(key), convertIndexedMap(value)));
+            return result;
+        } catch (Exception e) {
+            log.warn("读取本地 ai.* 配置失败,返回空 map: {}", e.getMessage());
+            return new LinkedHashMap<>();
+        }
+    }
+
+    /** kebab-case → camelCase,如 api-base-url → apiBaseUrl */
+    private String kebabToCamel(String key) {
+        if (key == null || !key.contains("-")) return key;
+        StringBuilder sb = new StringBuilder();
+        boolean upper = false;
+        for (char c : key.toCharArray()) {
+            if (c == '-') { upper = true; }
+            else { sb.append(upper ? Character.toUpperCase(c) : c); upper = false; }
+        }
+        return sb.toString();
+    }
+
+    /** Binder 把 List 绑成 {0:x, 1:y} 的 Map,需转回 List 以匹配前端期望的数组格式 */
+    @SuppressWarnings("unchecked")
+    private Object convertIndexedMap(Object value) {
+        if (value instanceof Map) {
+            Map<String, Object> map = (Map<String, Object>) value;
+            boolean allNumericKeys = !map.isEmpty() && map.keySet().stream()
+                    .allMatch(k -> k.matches("\\d+"));
+            if (allNumericKeys) {
+                java.util.List<Object> list = new java.util.ArrayList<>();
+                map.entrySet().stream()
+                        .sorted((a, b) -> Integer.compare(Integer.parseInt(a.getKey()), Integer.parseInt(b.getKey())))
+                        .forEach(e -> list.add(e.getValue()));
+                return list;
+            }
+        }
+        return value;
     }
 }
