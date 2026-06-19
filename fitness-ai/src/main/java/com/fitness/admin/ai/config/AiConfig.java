@@ -81,4 +81,77 @@ public class AiConfig {
      * 异步模式下,后台 AI 调用的最大等待时间(秒)。超过则写入 FAILED 状态。
      */
     private Integer asyncChatTimeoutSeconds = 90;
+
+    /**
+     * Embedding 专用 API Base URL(可与聊天 API 分开),如 DashScope:
+     * https://dashscope.aliyuncs.com/compatible-mode/v1
+     * 为空时回退到 apiBaseUrl。
+     */
+    private String embeddingApiBaseUrl;
+
+    /**
+     * Embedding 专用 API Key。为空时回退到 apiKey。
+     */
+    private String embeddingApiKey;
+
+    /**
+     * Embedding 模型名,如 text-embedding-v3(DashScope)或 text-embedding-3-small(OpenAI)
+     */
+    private String embeddingModel = "text-embedding-v3";
+
+    /**
+     * Embedding 维度,需与 Qdrant collection 一致; DashScope text-embedding-v3 最大 1024
+     */
+    private Integer embeddingDimension = 1024;
+
+    /**
+     * Qdrant gRPC 地址,如 localhost:6334
+     */
+    private String qdrantUrl = "localhost:6334";
+
+    /**
+     * Qdrant API Key(本地无密码可空)
+     */
+    private String qdrantApiKey = "";
+
+    /**
+     * Qdrant collection 名
+     */
+    private String qdrantCollection = "fitness_knowledge";
+
+    /**
+     * RAG 检索 Top-K
+     */
+    private Integer ragTopK = 5;
+
+    /**
+     * 相似度阈值,低于此分数丢弃(余弦距离 0~1)
+     */
+    private Double ragMinScore = 0.6;
+
+    /**
+     * 切块大小(字符),中文按字符计数
+     */
+    private Integer chunkSize = 500;
+
+    /**
+     * 切块重叠字符数
+     */
+    private Integer chunkOverlap = 50;
+
+    /**
+     * 获取 Embedding 实际使用的 API Base URL,优先用 embeddingApiBaseUrl,为空则回退到 apiBaseUrl。
+     */
+    public String getEffectiveEmbeddingApiBaseUrl() {
+        return (embeddingApiBaseUrl != null && !embeddingApiBaseUrl.isBlank())
+                ? embeddingApiBaseUrl : apiBaseUrl;
+    }
+
+    /**
+     * 获取 Embedding 实际使用的 API Key,优先用 embeddingApiKey,为空则回退到 apiKey。
+     */
+    public String getEffectiveEmbeddingApiKey() {
+        return (embeddingApiKey != null && !embeddingApiKey.isBlank())
+                ? embeddingApiKey : apiKey;
+    }
 }

@@ -6,6 +6,9 @@ import com.fitness.admin.common.base.BaseController;
 import com.fitness.admin.common.result.PageResult;
 import com.fitness.admin.common.result.R;
 import com.fitness.admin.ai.entity.KnowledgeBase;
+import com.fitness.admin.ai.config.AiConfig;
+import com.fitness.admin.ai.entity.AiChatMessage;
+import com.fitness.admin.ai.rag.RagRetriever;
 import com.fitness.admin.ai.service.AiAnalyticsService;
 import com.fitness.admin.ai.service.AiKnowledgeService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,6 +30,8 @@ public class AiKnowledgeController extends BaseController {
 
     private final AiKnowledgeService aiKnowledgeService;
     private final AiAnalyticsService aiAnalyticsService;
+    private final RagRetriever ragRetriever;
+    private final AiConfig aiConfig;
 
     @Operation(summary = "知识库列表")
     @GetMapping("/list")
@@ -104,24 +109,27 @@ public class AiKnowledgeController extends BaseController {
     @PostMapping("/rag-test")
     public R<Map<String, Object>> ragTest(@RequestBody Map<String, Object> params) {
         String query = (String) params.get("query");
-        Integer topK = params.get("topK") != null ? (Integer) params.get("topK") : 5;
+        Integer topK = params.get("topK") != null ? (Integer) params.get("topK") : aiConfig.getRagTopK();
+        if (topK == null || topK <= 0) topK = 5;
+        Double minScore = aiConfig.getRagMinScore() != null ? aiConfig.getRagMinScore() : 0.6;
 
-        // 模拟RAG检索结果
+        List<AiChatMessage.RagReference> refs = ragRetriever.retrieve(query, topK, minScore);
         List<Map<String, Object>> results = new ArrayList<>();
-        for (int i = 1; i <= Math.min(topK, 3); i++) {
+        for (AiChatMessage.RagReference ref : refs) {
             Map<String, Object> item = new HashMap<>();
-            item.put("id", i);
-            item.put("title", "相关知识 #" + i + " - " + query);
-            item.put("categoryName", "训练相关");
-            item.put("tags", List.of("力量训练", "增肌"));
-            item.put("summary", "这是关于 \"" + query + "\" 的模拟检索结果摘要内容...");
-            item.put("score", 0.95 - i * 0.05);
+            item.put("id", ref.getId());
+            item.put("title", ref.getTitle());
+            item.put("category", ref.getCategoryName());
+            item.put("score", ref.getScore());
+            item.put("source", ref.getSource());
             results.add(item);
         }
 
         Map<String, Object> data = new HashMap<>();
+        data.put("query", query);
         data.put("results", results);
-        data.put("qualityScore", 4.5);
+        data.put("hitCount", results.size());
+        data.put("message", "RAG检索测试完成");
         return success(data);
     }
 }

@@ -41,6 +41,7 @@
         <easyexcel.version>3.3.4</easyexcel.version>
         <openai.version>0.21.0</openai.version>
         <milvus.version>2.4.0</milvus.version>
+        <qdrant.version>1.10.0</qdrant.version>
         <cos-api.version>5.6.213</cos-api.version>
         <wxjava.version>4.7.5.B</wxjava.version>
         <lombok.version>1.18.30</lombok.version>
@@ -118,6 +119,18 @@
                 <groupId>io.milvus</groupId>
                 <artifactId>milvus-sdk-java</artifactId>
                 <version>${milvus.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.qdrant</groupId>
+                <artifactId>client</artifactId>
+                <version>${qdrant.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>3.24.0</version>
             </dependency>
 
             <dependency>

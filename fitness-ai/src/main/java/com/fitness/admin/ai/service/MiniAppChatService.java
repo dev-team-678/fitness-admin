@@ -11,10 +11,13 @@ import com.fitness.admin.ai.entity.AiUsageDaily;
 import com.fitness.admin.ai.mapper.AiChatMessageMapper;
 import com.fitness.admin.ai.mapper.AiChatSessionMapper;
 import com.fitness.admin.ai.mapper.AiUsageDailyMapper;
+import com.fitness.admin.ai.rag.RagRetriever;
 import com.fitness.admin.common.enums.ResultCodeEnum;
 import com.fitness.admin.common.exception.BizException;
 import com.fitness.admin.common.result.PageResult;
 import com.fitness.admin.common.utils.SecurityUtil;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -46,6 +49,8 @@ public class MiniAppChatService {
     private final AiRateLimiter rateLimiter;
     private final AiTimeoutGuard timeoutGuard;
     private final AiConfig aiConfig;
+    private final RagRetriever ragRetriever;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final int STATUS_PROCESSING = 1;
     private static final int STATUS_COMPLETED = 2;
@@ -165,19 +170,50 @@ public class MiniAppChatService {
     private void runAiCallSync(Long messageId, Long sessionId) {
         try {
             List<AiService.ChatMessage> chatMessages = buildChatMessages(sessionId);
+            String userQuery = extractLastUserMessage(chatMessages);
+            List<AiChatMessage.RagReference> refs = ragRetriever.retrieve(userQuery);
+            if (!refs.isEmpty()) {
+                augmentWithRag(chatMessages, refs);
+            }
+
             int timeoutSec = aiConfig.getAsyncChatTimeoutSeconds() != null
                     ? aiConfig.getAsyncChatTimeoutSeconds() : 90;
 
             String aiResponse = timeoutGuard.callWithTimeout(timeoutSec, () -> aiService.chat(chatMessages));
-            finalizeMessage(messageId, sessionId, aiResponse, STATUS_COMPLETED);
+            finalizeMessage(messageId, sessionId, aiResponse, STATUS_COMPLETED, refs);
         } catch (Exception e) {
             log.error("AI服务调用失败: messageId={}", messageId, e);
             String errMsg = "抱歉,AI服务暂时不可用,请稍后再试。";
-            finalizeMessage(messageId, sessionId, errMsg, STATUS_FAILED);
+            finalizeMessage(messageId, sessionId, errMsg, STATUS_FAILED, List.of());
         }
     }
 
-    private void finalizeMessage(Long messageId, Long sessionId, String content, int status) {
+    private String extractLastUserMessage(List<AiService.ChatMessage> messages) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            AiService.ChatMessage m = messages.get(i);
+            if ("user".equals(m.getRole())) return m.getContent();
+        }
+        return "";
+    }
+
+    private void augmentWithRag(List<AiService.ChatMessage> messages,
+                                List<AiChatMessage.RagReference> refs) {
+        if (messages.isEmpty()) return;
+        StringBuilder augmented = new StringBuilder();
+        augmented.append(messages.get(0).getContent())
+                .append("\n\n# 参考资料\n请基于以下参考资料回答用户问题,引用时附 [来源#index] 标记。\n");
+        for (int i = 0; i < refs.size(); i++) {
+            AiChatMessage.RagReference r = refs.get(i);
+            augmented.append('[').append(i + 1).append("] ");
+            if (r.getTitle() != null) augmented.append(r.getTitle()).append(" — ");
+            if (r.getCategoryName() != null) augmented.append('(').append(r.getCategoryName()).append(") ");
+            augmented.append("(score=").append(String.format("%.2f", r.getScore() == null ? 0.0 : r.getScore())).append(")\n");
+        }
+        messages.set(0, new AiService.ChatMessage("system", augmented.toString()));
+    }
+
+    private void finalizeMessage(Long messageId, Long sessionId, String content, int status,
+                                 List<AiChatMessage.RagReference> refs) {
         try {
             AiChatMessage msg = messageMapper.selectById(messageId);
             if (msg == null) {
@@ -187,6 +223,15 @@ public class MiniAppChatService {
             msg.setContent(content);
             msg.setTokenCount(content != null ? content.length() : 0);
             msg.setStreamStatus(status);
+            if (refs != null && !refs.isEmpty()) {
+                try {
+                    msg.setRagRefs(objectMapper.writeValueAsString(refs));
+                } catch (JsonProcessingException e) {
+                    log.warn("序列化 ragRefs 失败: {}", e.getMessage());
+                }
+            } else if (status == STATUS_COMPLETED) {
+                msg.setRagRefs(null);
+            }
             messageMapper.updateById(msg);
 
             if (status == STATUS_COMPLETED) {

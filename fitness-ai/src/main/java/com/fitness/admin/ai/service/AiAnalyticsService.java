@@ -23,6 +23,7 @@ public class AiAnalyticsService {
     private final AiChatMessageMapper aiChatMessageMapper;
     private final AiPlanMapper aiPlanMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final AiUsageDailyMapper aiUsageDailyMapper;
 
     public Map<String, Object> getOverview() {
         Map<String, Object> result = new HashMap<>();
@@ -209,13 +210,27 @@ public class AiAnalyticsService {
 
     public List<Map<String, Object>> getRagHitRate() {
         LocalDate endDate = LocalDate.now();
-        LocalDate startDate = endDate.minusDays(29);
+        LocalDate startDate = endDate.minusDays(6);
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MM-dd");
-        List<Map<String, Object>> result = new ArrayList<>();
+
+        Map<LocalDate, BigDecimal> daily = new HashMap<>();
         for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
+            daily.put(d, BigDecimal.ZERO);
+        }
+        List<AiUsageDaily> records = aiUsageDailyMapper.selectList(
+                new LambdaQueryWrapper<AiUsageDaily>()
+                        .between(AiUsageDaily::getStatDate, startDate, endDate));
+        for (AiUsageDaily r : records) {
+            if (r.getStatDate() != null) {
+                daily.put(r.getStatDate(), r.getRagHitRate() == null ? BigDecimal.ZERO : r.getRagHitRate());
+            }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map.Entry<LocalDate, BigDecimal> entry : daily.entrySet()) {
             Map<String, Object> point = new HashMap<>();
-            point.put("date", d.format(fmt));
-            point.put("hitRate", 0);
+            point.put("date", entry.getKey().format(fmt));
+            point.put("hitRate", entry.getValue());
             result.add(point);
         }
         return result;
