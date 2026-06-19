@@ -35,7 +35,7 @@ services:
   #   - IDENTITY_KEY / IDENTITY_VALUE 是 Nacos 节点间通信用的 server identity,任意 16+ 字符
   #   - 密码在控制台改,env 留空占位,改完手动同步到 fitness-admin.env
   nacos:
-    image: nacos/nacos-server:v2.4.0
+    image: nacos/nacos-server:v2.4.1
     container_name: fitness-nacos
     restart: unless-stopped
     ports:

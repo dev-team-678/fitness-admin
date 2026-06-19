@@ -48,12 +48,14 @@ public class MiniAppPlanGenerateService {
     private final PlanDayExerciseMapper planDayExerciseMapper;
     private final ExerciseMapper exerciseMapper;
     private final AiRateLimiter rateLimiter;
+    private final AiQuotaGuard quotaGuard;
     private final AiTimeoutGuard timeoutGuard;
 
     @Transactional
     public GeneratePlanResponse generatePlan(GeneratePlanRequest request) {
         Long userId = getCurrentUserId();
         rateLimiter.checkAndAcquire();
+        quotaGuard.checkPlanQuota(userId);
 
         String planPrompt = buildPlanPrompt(request);
 

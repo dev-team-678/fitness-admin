@@ -18,8 +18,8 @@ import com.fitness.admin.common.result.PageResult;
 import com.fitness.admin.common.utils.SecurityUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -28,8 +28,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Executor;
 
 /**
  * 小程序 AI 对话服务。
@@ -39,7 +38,6 @@ import java.util.concurrent.Executors;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MiniAppChatService {
 
     private final AiChatSessionMapper sessionMapper;
@@ -47,26 +45,47 @@ public class MiniAppChatService {
     private final AiUsageDailyMapper aiUsageDailyMapper;
     private final AiService aiService;
     private final AiRateLimiter rateLimiter;
+    private final AiQuotaGuard quotaGuard;
     private final AiTimeoutGuard timeoutGuard;
     private final AiConfig aiConfig;
     private final RagRetriever ragRetriever;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    /**
+     * AI 对话异步线程池(Spring 管理,见 {@link com.fitness.admin.ai.config.AiAsyncExecutorConfig})。
+     * 替换原先 static Executors.newFixedThreadPool,避免 Servlet 容器关停时线程不退出。
+     */
+    private final Executor chatAsyncExecutor;
 
     private static final int STATUS_PROCESSING = 1;
     private static final int STATUS_COMPLETED = 2;
     private static final int STATUS_FAILED = 3;
 
-    private static final ExecutorService ASYNC_CHAT_POOL = Executors.newFixedThreadPool(
-            Math.max(2, Runtime.getRuntime().availableProcessors()),
-            r -> {
-                Thread t = new Thread(r, "ai-chat-async");
-                t.setDaemon(true);
-                return t;
-            });
+    public MiniAppChatService(AiChatSessionMapper sessionMapper,
+                              AiChatMessageMapper messageMapper,
+                              AiUsageDailyMapper aiUsageDailyMapper,
+                              AiService aiService,
+                              AiRateLimiter rateLimiter,
+                              AiQuotaGuard quotaGuard,
+                              AiTimeoutGuard timeoutGuard,
+                              AiConfig aiConfig,
+                              RagRetriever ragRetriever,
+                              @Qualifier("aiChatAsyncExecutor") Executor chatAsyncExecutor) {
+        this.sessionMapper = sessionMapper;
+        this.messageMapper = messageMapper;
+        this.aiUsageDailyMapper = aiUsageDailyMapper;
+        this.aiService = aiService;
+        this.rateLimiter = rateLimiter;
+        this.quotaGuard = quotaGuard;
+        this.timeoutGuard = timeoutGuard;
+        this.aiConfig = aiConfig;
+        this.ragRetriever = ragRetriever;
+        this.chatAsyncExecutor = chatAsyncExecutor;
+    }
 
     public ChatResponse sendChatMessage(ChatRequest request) {
         Long userId = getCurrentUserId();
         rateLimiter.checkAndAcquire();
+        quotaGuard.checkChatQuota(userId);
 
         AiChatSession session;
         if (request.getSessionId() != null) {
@@ -156,7 +175,7 @@ public class MiniAppChatService {
 
     private void submitAsync(Long messageId, Long sessionId) {
         try {
-            ASYNC_CHAT_POOL.submit(() -> runAiCallSync(messageId, sessionId));
+            chatAsyncExecutor.execute(() -> runAiCallSync(messageId, sessionId));
         } catch (Exception e) {
             log.error("提交 AI 异步任务失败,降级为同步处理: messageId={}", messageId, e);
             runAiCallSync(messageId, sessionId);
@@ -179,12 +198,60 @@ public class MiniAppChatService {
             int timeoutSec = aiConfig.getAsyncChatTimeoutSeconds() != null
                     ? aiConfig.getAsyncChatTimeoutSeconds() : 90;
 
-            String aiResponse = timeoutGuard.callWithTimeout(timeoutSec, () -> aiService.chat(chatMessages));
-            finalizeMessage(messageId, sessionId, aiResponse, STATUS_COMPLETED, refs);
+            long t0 = System.currentTimeMillis();
+            AiService.LlmResponse resp = timeoutGuard.callWithTimeout(
+                    timeoutSec, () -> aiService.chatWithUsage(chatMessages));
+            long latencyMs = System.currentTimeMillis() - t0;
+
+            // 真实 token 计数:由 LLM 上报,优先用;若 LLM 不返回,回退 0(不再用字符数伪造)
+            int totalTokens = resp.getTotalTokens();
+            try {
+                quotaGuard.checkAndAccumulateTokens(totalTokens);
+            } catch (com.fitness.admin.common.exception.BizException quotaEx) {
+                finalizeMessage(messageId, sessionId,
+                        "今日 AI token 用量已达上限,请明日再试。", STATUS_FAILED, List.of());
+                return;
+            }
+
+            finalizeMessageWithUsage(messageId, sessionId, resp.getContent(),
+                    STATUS_COMPLETED, refs, totalTokens, latencyMs);
         } catch (Exception e) {
             log.error("AI服务调用失败: messageId={}", messageId, e);
             String errMsg = "抱歉,AI服务暂时不可用,请稍后再试。";
             finalizeMessage(messageId, sessionId, errMsg, STATUS_FAILED, List.of());
+        }
+    }
+
+    private void finalizeMessageWithUsage(Long messageId, Long sessionId, String content, int status,
+                                          List<AiChatMessage.RagReference> refs,
+                                          int totalTokens, long latencyMs) {
+        try {
+            AiChatMessage msg = messageMapper.selectById(messageId);
+            if (msg == null) {
+                log.warn("异步任务结束时消息已不存在: messageId={}", messageId);
+                return;
+            }
+            msg.setContent(content);
+            msg.setTokenCount(totalTokens);
+            msg.setStreamStatus(status);
+            if (refs != null && !refs.isEmpty()) {
+                try {
+                    msg.setRagRefs(objectMapper.writeValueAsString(refs));
+                } catch (JsonProcessingException e) {
+                    log.warn("序列化 ragRefs 失败: {}", e.getMessage());
+                }
+            } else if (status == STATUS_COMPLETED) {
+                msg.setRagRefs(null);
+            }
+            messageMapper.updateById(msg);
+
+            if (status == STATUS_COMPLETED) {
+                upsertTodayUsage();
+            }
+            log.info("AI 调用完成: messageId={}, totalTokens={}, latencyMs={}",
+                    messageId, totalTokens, latencyMs);
+        } catch (Exception e) {
+            log.error("写回 AI 消息结果失败: messageId={}, status={}", messageId, status, e);
         }
     }
 

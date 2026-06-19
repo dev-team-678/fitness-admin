@@ -2,24 +2,31 @@ package com.fitness.admin.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fitness.admin.ai.config.AiConfig;
 import com.fitness.admin.ai.entity.AiAdjustmentConfig;
 import com.fitness.admin.ai.entity.AiPlan;
 import com.fitness.admin.ai.entity.PlanLoadAdjustment;
 import com.fitness.admin.ai.mapper.AiAdjustmentConfigMapper;
 import com.fitness.admin.ai.mapper.AiPlanMapper;
 import com.fitness.admin.ai.mapper.PlanLoadAdjustmentMapper;
+import com.fitness.admin.common.enums.ResultCodeEnum;
+import com.fitness.admin.common.exception.BizException;
 import com.fitness.admin.common.utils.SecurityUtil;
 import com.fitness.admin.content.entity.WorkoutPlan;
 import com.fitness.admin.content.mapper.PlanMapper;
 import com.fitness.admin.user.entity.User;
 import com.fitness.admin.user.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AiPlanService {
@@ -29,6 +36,7 @@ public class AiPlanService {
     private final PlanLoadAdjustmentMapper planLoadAdjustmentMapper;
     private final AiAdjustmentConfigMapper aiAdjustmentConfigMapper;
     private final UserMapper userMapper;
+    private final AiConfig aiConfig;
 
     public Page<AiPlan> queryPage(Integer pageNum, Integer pageSize, Long userId, String status, String splitType) {
         Page<AiPlan> page = new Page<>(pageNum, pageSize);
@@ -109,12 +117,36 @@ public class AiPlanService {
     }
 
     public void updateAdjustmentConfig(Map<String, Object> config) {
-        // 获取所有已有的合法config_key
-        List<AiAdjustmentConfig> existingConfigs = aiAdjustmentConfigMapper.selectList(null);
-        java.util.Set<String> validKeys = new java.util.HashSet<>();
-        for (AiAdjustmentConfig c : existingConfigs) {
-            validKeys.add(c.getConfigKey());
+        if (config == null || config.isEmpty()) {
+            return;
         }
+
+        // 双校验 1:登录用户态 + 角色 = admin
+        // (Sa-Token 已保证 controller 入口有 ai:plan:update 权限,但 service 层仍做一次防御性校验,
+        //  防止内部调用绕过权限注解)
+        Long currentUserId = SecurityUtil.getCurrentUserId();
+        if (currentUserId == null) {
+            throw new BizException(ResultCodeEnum.UNAUTHORIZED);
+        }
+        if (!SecurityUtil.hasRole("admin")) {
+            log.warn("非管理员尝试修改微调规则: userId={}", currentUserId);
+            throw new BizException(ResultCodeEnum.FORBIDDEN);
+        }
+
+        // 双校验 2:key 白名单 — 仅 Nacos 配的 whitelist 内的 key 可写入,
+        // 避免前端任意传入键污染 ai_adjustment_config。
+        List<String> whitelist = aiConfig.getAdjustmentRuleWhitelist();
+        Set<String> validKeys = (whitelist == null || whitelist.isEmpty())
+                ? Set.of()
+                : new HashSet<>(whitelist);
+
+        // 获取所有已有的合法config_key(数据库里已存在的 key 视为合法,便于历史数据平滑)
+        Set<String> existingKeys = new HashSet<>();
+        for (AiAdjustmentConfig c : aiAdjustmentConfigMapper.selectList(null)) {
+            existingKeys.add(c.getConfigKey());
+        }
+        Set<String> allowedKeys = new HashSet<>(existingKeys);
+        allowedKeys.addAll(validKeys);
 
         for (Map.Entry<String, Object> entry : config.entrySet()) {
             String key = entry.getKey();
@@ -131,7 +163,13 @@ public class AiPlanService {
                 continue;
             }
 
-            if (validKeys.contains(key)) {
+            // 白名单校验:既不在白名单也不在已有 key 集合 → 拒绝写入
+            if (!allowedKeys.contains(key)) {
+                log.warn("拒绝写入未授权的微调规则 key: userId={}, key={}", currentUserId, key);
+                continue;
+            }
+
+            if (existingKeys.contains(key)) {
                 // 更新已有配置
                 LambdaQueryWrapper<AiAdjustmentConfig> wrapper = new LambdaQueryWrapper<>();
                 wrapper.eq(AiAdjustmentConfig::getConfigKey, key);
@@ -141,7 +179,7 @@ public class AiPlanService {
                     aiAdjustmentConfigMapper.updateById(existing);
                 }
             } else {
-                // 新增配置（仅允许简单值）
+                // 新增配置(必经过白名单,这里 key 已在 allowedKeys)
                 AiAdjustmentConfig newConfig = new AiAdjustmentConfig();
                 newConfig.setConfigKey(key);
                 newConfig.setConfigValue(strValue);

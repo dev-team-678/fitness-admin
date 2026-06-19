@@ -5,15 +5,19 @@ import com.fitness.admin.ai.dto.*;
 import com.fitness.admin.ai.entity.AiChatMessage;
 import com.fitness.admin.ai.entity.AiChatSession;
 import com.fitness.admin.ai.entity.AiPlan;
+import com.fitness.admin.ai.service.AiSseStreamService;
 import com.fitness.admin.ai.service.MiniAppAiService;
 import com.fitness.admin.common.base.BaseController;
 import com.fitness.admin.common.result.PageResult;
 import com.fitness.admin.common.result.R;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * 小程序AI接口
@@ -26,6 +30,7 @@ import org.springframework.web.bind.annotation.*;
 public class MiniAppAiController extends BaseController {
 
     private final MiniAppAiService miniAppAiService;
+    private final AiSseStreamService sseStreamService;
 
     @Operation(summary = "发送AI对话消息")
     @PostMapping("/chat/send")
@@ -39,13 +44,30 @@ public class MiniAppAiController extends BaseController {
         return success(miniAppAiService.pollMessage(messageId));
     }
 
+    /**
+     * SSE 流式对话。前端用 EventSource({withCredentials:true}) 订阅。
+     * <p>事件序列:
+     * <ul>
+     *   <li>{@code meta}: 会话信息(JSON,含 sessionId / messageId)</li>
+     *   <li>{@code chunk}: 增量文本(plain text)</li>
+     *   <li>{@code done}: 结束事件,data=token 总数 + 完整 content 长度</li>
+     *   <li>{@code error}: 异常事件,data=错误消息</li>
+     * </ul>
+     */
+    @Operation(summary = "SSE流式对话")
+    @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStream(@RequestParam Long sessionId,
+                                 @RequestParam(required = false) Long messageId) {
+        return sseStreamService.stream(sessionId, messageId);
+    }
+
     @Operation(summary = "会话消息列表")
     @GetMapping("/chat/{sessionId}/messages")
     public R<PageResult<AiChatMessage>> getChatMessages(
             @PathVariable Long sessionId,
             @RequestParam(defaultValue = "1") Integer pageNum,
             @RequestParam(defaultValue = "20") Integer pageSize) {
-        return success(miniAppAiService.getChatMessages(sessionId, pageNum, pageSize));
+        return success(miniAppAiService.getChatMessages(sessionId, pageSize, pageNum));
     }
 
     @Operation(summary = "会话列表")

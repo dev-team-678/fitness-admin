@@ -3,6 +3,7 @@ package com.fitness.admin.system.config;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fitness.admin.common.exception.BizException;
+import com.fitness.admin.common.utils.SecretMasker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -65,6 +66,12 @@ public class NacosConfigPublisher {
      * 拼接 Nacos Open API URL。Nacos 未启用鉴权时(username/password 都为空),
      * 强制不携带凭据,避免 Nacos 把空 password 视作错误凭据返回 403/500。
      * Nacos 启用鉴权时,需在 application.yml / env 里把 nacos.username / nacos.password 配齐。
+     *
+     * <p><b>路径必须带 /nacos 前缀:</b>生产 Nacos(118.25.55.203:8848)context path
+     * 部署为 {@code /nacos},Open API 真实地址为 {@code /nacos/v1/cs/configs}。
+     * 早期曾误用 {@code /v1/cs/configs}(不带 /nacos)→ 404,加 /nacos 后通过。
+     * 验证方式:浏览器访问 {@code http://<host>:8848/} 看到欢迎页/控制台 → context 是 /nacos;
+     * 访问 {@code http://<host>:8848/nacos/} 才看到 → 同上;二者均能看到则镜像按镜像 env 决定。
      */
     private String buildUrl() {
         StringBuilder sb = new StringBuilder("http://")
@@ -119,21 +126,76 @@ public class NacosConfigPublisher {
             }
             String body = resp.getBody();
             if (body == null || body.isBlank()) {
-                return new LinkedHashMap<>();
+                return buildMaskedFallback();
             }
             Map<String, Object> root = new Yaml().load(body);
             Object ai = root == null ? null : root.get("ai");
             if (ai instanceof Map) {
-                return (Map<String, Object>) ai;
+                return maskSensitive((Map<String, Object>) ai);
             }
             return new LinkedHashMap<>();
         } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
             log.info("Nacos 配置不存在(首次使用尚未保存),回退本地配置: dataId={}", AI_DATA_ID);
+            return buildMaskedFallback();
+        } catch (RestClientException e) {
+            log.error("调用 Nacos Open API 失败", e);
+            throw new BizException("Nacos 不可达: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Nacos 配置不存在时,从 Spring Environment 读取当前生效的 ai.* 属性构建回退 map,
+     * 让前端展示 application.yml 里的默认配置而非空白表单。
+     * Binder 读出的 key 为 kebab-case(Spring Boot YAML 惯例),需转为前端期望的 camelCase。
+     *
+     * <p><b>注意:</b>内部使用,不脱敏。仅供审计/连接测试等需要真实 key 的服务端链路使用。
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getAiConfigUnmasked() {
+        String url = buildUrl();
+        try {
+            ResponseEntity<String> resp = restTemplate.getForEntity(url, String.class);
+            if (!resp.getStatusCode().is2xxSuccessful()) {
+                throw new BizException("Nacos 拉取失败: HTTP " + resp.getStatusCode());
+            }
+            String body = resp.getBody();
+            if (body == null || body.isBlank()) {
+                return buildFallbackMap();
+            }
+            Map<String, Object> root = new Yaml().load(body);
+            Object ai = root == null ? null : root.get("ai");
+            if (ai instanceof Map) {
+                return new LinkedHashMap<>((Map<String, Object>) ai);
+            }
+            return new LinkedHashMap<>();
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            log.info("Nacos 配置不存在,回退本地配置: dataId={}", AI_DATA_ID);
             return buildFallbackMap();
         } catch (RestClientException e) {
             log.error("调用 Nacos Open API 失败", e);
             throw new BizException("Nacos 不可达: " + e.getMessage());
         }
+    }
+
+    /**
+     * 返回前端前对 api-key / embedding-api-key / qdrant-api-key 脱敏,
+     * 避免 key 走接口出到浏览器/抓包。Nacos 存储侧仍为明文,由 Nacos 2.x
+     * 自带 AES config encryption plugin 加密落盘(运维侧配置,不在此处处理)。
+     */
+    private Map<String, Object> maskSensitive(Map<String, Object> ai) {
+        String[] keys = {"apiKey", "embeddingApiKey", "qdrantApiKey"};
+        Map<String, Object> result = new LinkedHashMap<>(ai);
+        for (String k : keys) {
+            Object v = result.get(k);
+            if (v instanceof String s && !s.isEmpty()) {
+                result.put(k, SecretMasker.mask(s));
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Object> buildMaskedFallback() {
+        return maskSensitive(buildFallbackMap());
     }
 
     private String toYaml(Map<String, Object> aiConfigMap) {

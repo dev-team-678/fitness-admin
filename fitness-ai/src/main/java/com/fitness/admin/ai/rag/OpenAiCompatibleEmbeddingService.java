@@ -18,12 +18,14 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 兼容 OpenAI Embeddings 协议的 Embedding 实现。
  * 优先使用 AiConfig 中 embedding 专用的 apiBaseUrl/apiKey,
  * 未配置时回退到聊天 API 的 apiBaseUrl/apiKey。
+ *
+ * <p>OkHttpClient 来自 {@link com.fitness.admin.ai.service.AiHttpClientConfig},
+ * 超时与 LLM 共享同一份。
  */
 @Slf4j
 @Service
@@ -32,12 +34,7 @@ public class OpenAiCompatibleEmbeddingService implements EmbeddingService {
 
     private final AiConfig aiConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
-
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .build();
+    private final OkHttpClient httpClient;
 
     @Override
     public List<Double> embed(String text) {
