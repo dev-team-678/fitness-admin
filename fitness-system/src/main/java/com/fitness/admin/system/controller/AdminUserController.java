@@ -10,8 +10,8 @@ import com.fitness.admin.system.dto.AdminUserUpsertDTO;
 import com.fitness.admin.system.service.AdminUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -39,7 +39,7 @@ public class AdminUserController extends BaseController {
     @Operation(summary = "新增管理员")
     @PostMapping
     @SaCheckPermission("admin:user:create")
-    public R<Void> create(@Valid @RequestBody AdminUserUpsertDTO dto) {
+    public R<Void> create(@Validated(AdminUserUpsertDTO.Create.class) @RequestBody AdminUserUpsertDTO dto) {
         adminUserService.create(dto);
         return success();
     }
@@ -48,7 +48,7 @@ public class AdminUserController extends BaseController {
     @Operation(summary = "更新管理员")
     @PutMapping("/{id}")
     @SaCheckPermission("admin:user:update")
-    public R<Void> update(@PathVariable Long id, @Valid @RequestBody AdminUserUpsertDTO dto) {
+    public R<Void> update(@PathVariable Long id, @Validated(AdminUserUpsertDTO.Update.class) @RequestBody AdminUserUpsertDTO dto) {
         adminUserService.update(id, dto);
         return success();
     }
