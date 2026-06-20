@@ -238,11 +238,34 @@ public class SysConfigController extends BaseController {
     @Operation(summary = "AI配置变更审计日志")
     @GetMapping("/ai-config/audit-log")
     public R<Map<String, Object>> auditLog(@RequestParam(defaultValue = "1") Integer pageNum,
-                                          @RequestParam(defaultValue = "20") Integer pageSize) {
+                                          @RequestParam(defaultValue = "20") Integer pageSize,
+                                          @RequestParam(required = false) String field,
+                                          @RequestParam(required = false) String operatorName,
+                                          @RequestParam(required = false) String keyFingerprint,
+                                          @RequestParam(required = false) String startDate,
+                                          @RequestParam(required = false) String endDate) {
         Page<AiConfigAuditLog> page = new Page<>(pageNum, pageSize);
-        IPage<AiConfigAuditLog> result = aiConfigAuditLogMapper.selectPage(page,
-                new LambdaQueryWrapper<AiConfigAuditLog>()
-                        .orderByDesc(AiConfigAuditLog::getCreatedAt));
+        LambdaQueryWrapper<AiConfigAuditLog> wrapper = new LambdaQueryWrapper<>();
+        if (field != null && !field.isBlank()) {
+            wrapper.eq(AiConfigAuditLog::getField, field);
+        }
+        if (operatorName != null && !operatorName.isBlank()) {
+            wrapper.like(AiConfigAuditLog::getOperatorName, operatorName);
+        }
+        if (keyFingerprint != null && !keyFingerprint.isBlank()) {
+            // 精确匹配:指纹是 SHA-256 前 8 位 hex,模糊匹配会产生误导
+            wrapper.eq(AiConfigAuditLog::getKeyFingerprint, keyFingerprint.trim().toLowerCase());
+        }
+        if (startDate != null && !startDate.isBlank()) {
+            wrapper.ge(AiConfigAuditLog::getCreatedAt,
+                    java.time.LocalDateTime.parse(startDate + "T00:00:00"));
+        }
+        if (endDate != null && !endDate.isBlank()) {
+            wrapper.le(AiConfigAuditLog::getCreatedAt,
+                    java.time.LocalDateTime.parse(endDate + "T23:59:59"));
+        }
+        wrapper.orderByDesc(AiConfigAuditLog::getCreatedAt);
+        IPage<AiConfigAuditLog> result = aiConfigAuditLogMapper.selectPage(page, wrapper);
         // LocalDateTime 默认序列化为 ISO 8601("2026-06-20T09:39:14"),运维看着别扭,
         // 统一格式化为 "yyyy-MM-dd HH:mm:ss"。原值已在 MySQL 完整保存,不影响二次分析。
         java.time.format.DateTimeFormatter FMT =
