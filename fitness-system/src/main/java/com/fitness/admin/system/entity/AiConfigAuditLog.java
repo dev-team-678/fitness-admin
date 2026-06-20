@@ -27,6 +27,8 @@ public class AiConfigAuditLog implements Serializable {
     private String op;
     private String oldValueMasked;
     private String newValueMasked;
+    /** Key SHA-256 前 8 位 (2026-06-20 P1-6) */
+    private String keyFingerprint;
     private Long operatorId;
     private String operatorName;
     private String clientIp;

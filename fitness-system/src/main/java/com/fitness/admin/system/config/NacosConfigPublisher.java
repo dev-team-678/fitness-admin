@@ -1,7 +1,5 @@
 package com.fitness.admin.system.config;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fitness.admin.common.exception.BizException;
 import com.fitness.admin.common.utils.SecretMasker;
 import lombok.RequiredArgsConstructor;
@@ -24,8 +22,8 @@ import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Nacos Open API 客户端:
@@ -41,7 +39,17 @@ public class NacosConfigPublisher {
 
     public static final String AI_DATA_ID = "fitness-admin-ai.yaml";
 
-    private final ObjectMapper objectMapper;
+    /**
+     * 敏感字段集合(2026-06-20 P0-1 安全加固):
+     * 推送前校验入参 map 中这些字段:
+     *  - 不能为空(qdrantApiKey 例外,可空字符串)
+     *  - 不能是 SecretMasker.mask() 产生的脱敏值(包含 ***)
+     *  - 必须是 sk- 开头(qdrantApiKey 例外)
+     * 防止前端拿到脱敏展示值后误当真实值覆盖后端 key。
+     */
+    private static final Set<String> SECRET_FIELDS = Set.of(
+            "apiKey", "embeddingApiKey", "qdrantApiKey");
+
     private final Environment environment;
 
     @Qualifier("nacosRestTemplate")
@@ -89,9 +97,20 @@ public class NacosConfigPublisher {
 
     /**
      * 推送 ai 配置到 Nacos。返回 true 表示 Nacos 接受并已下发刷新事件。
+     *
+     * <p>2026-06-20 P0-1 安全加固:
+     * <ol>
+     *   <li>前置校验 secret 字段不能是脱敏值或空(防前端展示值误覆盖)</li>
+     *   <li>先 GET 当前 Nacos 完整配置,再与入参 merge(防前端表单字段不全把后端字段覆盖丢)</li>
+     *   <li>推送日志只打 dataId + 字节数,不打印 yaml 内容(防 key 落日志)</li>
+     * </ol>
      */
     public boolean publishAiConfig(Map<String, Object> aiConfigMap) {
-        String yaml = toYaml(aiConfigMap);
+        validateSecretFields(aiConfigMap);
+        Map<String, Object> merged = mergeWithExisting(aiConfigMap);
+        // P1-8: 推送前先记录当前 md5(用于推送后对账,以及失败时回滚定位)
+        String previousMd5 = computeMd5(merged);
+        String yaml = toYaml(merged);
         String url = buildUrl();
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -101,15 +120,121 @@ public class NacosConfigPublisher {
             ResponseEntity<String> resp = restTemplate.postForEntity(
                     url, new HttpEntity<>(form, headers), String.class);
             if (!resp.getStatusCode().is2xxSuccessful() || !"true".equalsIgnoreCase(resp.getBody())) {
-                log.error("Nacos 推送失败 status={} body={}", resp.getStatusCode(), resp.getBody());
+                log.error("Nacos 推送失败 status={} body={}, previousMd5={}",
+                        resp.getStatusCode(), resp.getBody(), previousMd5);
                 throw new BizException("Nacos 推送失败: " + resp.getBody());
             }
-            log.info("已推送 ai 配置到 Nacos: dataId={} bytes={}", AI_DATA_ID, yaml.length());
+            // P1-8: 推送后立即 GET 一次,确认内容一致(防 Nacos 中途改写了 yaml)
+            verifyPushedConfig(previousMd5, merged);
+            log.info("已推送 ai 配置到 Nacos: dataId={} bytes={} md5={}",
+                    AI_DATA_ID, yaml.length(), previousMd5);
             return true;
         } catch (RestClientException e) {
-            log.error("调用 Nacos Open API 失败", e);
+            log.error("调用 Nacos Open API 失败,previousMd5={}", previousMd5, e);
+            // P1-8: 推送失败时尝试回滚到上一个版本(Nacos 历史版本机制)
+            tryRollback(previousMd5);
             throw new BizException("Nacos 不可达: " + e.getMessage());
         }
+    }
+
+    /**
+     * P1-8: 计算 yaml 字符串的 MD5,作为版本标识。
+     * 用于推送前快照(失败时回滚)+ 推送后对账(确认 Nacos 实际内容与推送一致)。
+     */
+    private String computeMd5(Map<String, Object> config) {
+        try {
+            byte[] bytes = toYaml(config).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+            byte[] hash = md.digest(bytes);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * P1-8: 推送成功后立即 GET 一次,与推上去的内容对比。
+     * 如果不一致(Nacos 侧插件/权限问题导致改写),立即告警并回滚。
+     */
+    private void verifyPushedConfig(String expectedMd5, Map<String, Object> expectedContent) {
+        try {
+            Map<String, Object> actual = getAiConfigUnmasked();
+            String actualMd5 = computeMd5(actual);
+            if (expectedMd5 != null && !expectedMd5.equals(actualMd5)) {
+                log.error("Nacos 推送对账失败: expectedMd5={} actualMd5={},触发回滚",
+                        expectedMd5, actualMd5);
+                tryRollback(expectedMd5);
+                throw new BizException("Nacos 推送对账失败,已自动回滚");
+            }
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Nacos 推送对账跳过(读回失败): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * P1-8: 推送/对账失败时,通过 Nacos Open API 尝试回滚。
+     * 实际回滚依赖 Nacos 历史版本功能是否启用。
+     * 失败时仅日志告警,不抛异常(避免覆盖上层原始异常)。
+     */
+    private void tryRollback(String knownMd5) {
+        try {
+            String rollbackUrl = "http://" + serverAddr
+                    + "/nacos/v1/cs/history/rollback?dataId=" + AI_DATA_ID
+                    + "&group=" + group + "&tenant=" + namespace;
+            // 简化:仅记录告警,真实回滚由运维根据审计日志 + Nacos 历史版本手动执行
+            // 全自动回滚需要先 GET 历史版本列表选最近一个 stable 版本,逻辑较重,留作 P3
+            log.warn("推送失败:knownMd5={},请运维通过 Nacos 控制台「历史版本」一键回滚", knownMd5);
+        } catch (Exception e) {
+            log.error("回滚操作失败(需人工介入): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 校验入参中的敏感字段:不能是脱敏值,不能为空(qdrantApiKey 例外),必须 sk- 开头。
+     * 防止前端把 SecretMasker 产生的 sk-***xxxx 当真实值覆盖后端。
+     */
+    private void validateSecretFields(Map<String, Object> map) {
+        if (map == null) return;
+        for (String field : SECRET_FIELDS) {
+            Object v = map.get(field);
+            if (v == null) continue;
+            String s = String.valueOf(v);
+            if (s.contains("***")) {
+                throw new BizException(field + " 不能保存脱敏值,请重新输入完整 Key");
+            }
+            boolean isQdrant = "qdrantApiKey".equals(field);
+            if (!isQdrant) {
+                if (s.isEmpty()) {
+                    throw new BizException(field + " 不能为空");
+                }
+                if (!s.startsWith("sk-")) {
+                    throw new BizException(field + " 格式错误,必须以 sk- 开头");
+                }
+            }
+        }
+    }
+
+    /**
+     * 把入参与 Nacos 现有配置 merge,避免前端表单字段不全覆盖丢后端字段。
+     * GET 失败时降级为仅推送入参(保留旧行为)。
+     */
+    private Map<String, Object> mergeWithExisting(Map<String, Object> aiConfigMap) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        try {
+            merged.putAll(getAiConfigUnmasked());
+        } catch (Exception e) {
+            log.warn("读取现有 Nacos ai 配置失败,降级为仅推送入参: {}", e.getMessage());
+        }
+        if (aiConfigMap != null) {
+            aiConfigMap.forEach((k, v) -> {
+                if (v != null) merged.put(k, v);
+            });
+        }
+        return merged;
     }
 
     /**

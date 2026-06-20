@@ -14,6 +14,11 @@ spring:
         group: DEFAULT_GROUP
         file-extension: yaml
         refresh-enabled: true
+        # 与 Nacos server 保持一致
+        encryption:
+          type: aes
+          aes:
+            key: ${NACOS_AES_KEY:}   # 从环境变量注入,不进 git
         extension-configs:
           - data-id: fitness-admin-ai.yaml
             group: DEFAULT_GROUP

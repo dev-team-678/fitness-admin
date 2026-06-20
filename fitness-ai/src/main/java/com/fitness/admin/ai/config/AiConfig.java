@@ -1,5 +1,6 @@
 package com.fitness.admin.ai.config;
 
+import com.fitness.admin.ai.security.ApiKeyEntry;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -42,6 +43,13 @@ public class AiConfig {
      */
     @NotBlank
     private String apiKey;
+
+    /**
+     * API Key 池 (P2-9 Key 轮转,2026-06-20)。
+     * 为空时 {@link com.fitness.admin.ai.security.ApiKeyManager} 自动回退到 {@link #apiKey} 单值。
+     * 格式: [{id: "primary", value: "sk-...", role: PRIMARY, priority: 0}, ...]
+     */
+    private List<ApiKeyEntry> apiKeys = new ArrayList<>();
 
     /**
      * API Base URL
@@ -132,6 +140,12 @@ public class AiConfig {
      * Embedding 专用 API Key。为空时回退到 apiKey。
      */
     private String embeddingApiKey;
+
+    /**
+     * Embedding Key 池 (P2-9 Key 轮转,2026-06-20)。
+     * 为空时 {@link com.fitness.admin.ai.security.EmbeddingApiKeyManager} 自动回退到 {@link #embeddingApiKey} 单值。
+     */
+    private List<ApiKeyEntry> embeddingApiKeys = new ArrayList<>();
 
     /**
      * Embedding 模型名,如 text-embedding-v3(DashScope)或 text-embedding-3-small(OpenAI)
