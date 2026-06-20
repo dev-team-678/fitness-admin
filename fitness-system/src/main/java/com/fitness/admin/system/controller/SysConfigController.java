@@ -17,6 +17,8 @@ import com.fitness.admin.system.entity.AiConfigAuditLog;
 import com.fitness.admin.system.entity.SysConfig;
 import com.fitness.admin.system.mapper.AiConfigAuditLogMapper;
 import com.fitness.admin.system.service.SysConfigService;
+import com.fitness.admin.user.entity.AdminUser;
+import com.fitness.admin.user.mapper.AdminUserMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,6 +44,7 @@ public class SysConfigController extends BaseController {
     private final NacosConfigPublisher nacosConfigPublisher;
     private final AiConnectionTestService aiConnectionTestService;
     private final AiConfigAuditLogMapper aiConfigAuditLogMapper;
+    private final AdminUserMapper adminUserMapper;
 
     @Operation(summary = "配置列表")
     @GetMapping("/list")
@@ -121,7 +124,7 @@ public class SysConfigController extends BaseController {
                                HttpServletRequest request) {
         try {
             Long operatorId = SecurityUtil.getCurrentUserId();
-            String operatorName = currentUsername();
+            String operatorName = currentUsername(operatorId);
             String clientIp = clientIp(request);
             for (Map.Entry<String, Object> e : newMap.entrySet()) {
                 String field = e.getKey();
@@ -132,8 +135,8 @@ public class SysConfigController extends BaseController {
                 rec.setDataId(NacosConfigPublisher.AI_DATA_ID);
                 rec.setField(field);
                 rec.setOp("update");
-                rec.setOldValueMasked(SecretMasker.mask(oldVal == null ? "" : String.valueOf(oldVal)));
-                rec.setNewValueMasked(SecretMasker.mask(newVal == null ? "" : String.valueOf(newVal)));
+                rec.setOldValueMasked(formatValue(field, oldVal));
+                rec.setNewValueMasked(formatValue(field, newVal));
                 // P2-10: 对 key 字段额外算 SHA-256 前 8 位指纹,便于审计识别"哪个 key"
                 if (SECRET_FIELDS.contains(field)) {
                     rec.setKeyFingerprint(fingerprint(newVal == null ? "" : String.valueOf(newVal)));
@@ -146,6 +149,20 @@ public class SysConfigController extends BaseController {
         } catch (Exception ex) {
             log.error("写 AI 配置审计日志失败", ex);
         }
+    }
+
+    /**
+     * 审计日志写入时的值格式化:
+     *   - 密钥字段(apiKey / embeddingApiKey / qdrantApiKey):统一脱敏为 ***,避免日志泄露
+     *   - 普通字段:保留原值,便于审计识别 true/false / 数字 / URL 等具体变更
+     */
+    private String formatValue(String field, Object value) {
+        if (value == null) return null;
+        String s = String.valueOf(value);
+        if (SECRET_FIELDS.contains(field)) {
+            return SecretMasker.mask(s);
+        }
+        return s;
     }
 
     private static final java.util.Set<String> SECRET_FIELDS =
@@ -181,12 +198,22 @@ public class SysConfigController extends BaseController {
         }
     }
 
-    private String currentUsername() {
+    /**
+     * 优先返回 admin_user.nickname,空时回退 username,再空则用 "id=<userId>"。
+     * StpUtil.getLoginId() 在 Sa-Token 默认配置下返回的是 userId 而不是登录名,
+     * 因此历史日志会出现 operatorName="1" 这种无意义值;这里改成查库拿真名。
+     */
+    private String currentUsername(Long operatorId) {
+        if (operatorId == null) return "system";
         try {
-            Object loginId = StpUtil.getLoginId();
-            return loginId == null ? "system" : String.valueOf(loginId);
+            AdminUser user = adminUserMapper.selectById(operatorId);
+            if (user == null) return "id=" + operatorId;
+            if (user.getNickname() != null && !user.getNickname().isBlank()) return user.getNickname();
+            if (user.getUsername() != null && !user.getUsername().isBlank()) return user.getUsername();
+            return "id=" + operatorId;
         } catch (Exception e) {
-            return "system";
+            log.warn("读取操作人 admin_user 失败,回退 id: {}", e.getMessage());
+            return "id=" + operatorId;
         }
     }
 
@@ -216,8 +243,27 @@ public class SysConfigController extends BaseController {
         IPage<AiConfigAuditLog> result = aiConfigAuditLogMapper.selectPage(page,
                 new LambdaQueryWrapper<AiConfigAuditLog>()
                         .orderByDesc(AiConfigAuditLog::getCreatedAt));
+        // LocalDateTime 默认序列化为 ISO 8601("2026-06-20T09:39:14"),运维看着别扭,
+        // 统一格式化为 "yyyy-MM-dd HH:mm:ss"。原值已在 MySQL 完整保存,不影响二次分析。
+        java.time.format.DateTimeFormatter FMT =
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        List<Map<String, Object>> rows = result.getRecords().stream().map(r -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.getId());
+            m.put("dataId", r.getDataId());
+            m.put("field", r.getField());
+            m.put("op", r.getOp());
+            m.put("oldValueMasked", r.getOldValueMasked());
+            m.put("newValueMasked", r.getNewValueMasked());
+            m.put("keyFingerprint", r.getKeyFingerprint());
+            m.put("operatorId", r.getOperatorId());
+            m.put("operatorName", r.getOperatorName());
+            m.put("clientIp", r.getClientIp());
+            m.put("createdAt", r.getCreatedAt() == null ? null : r.getCreatedAt().format(FMT));
+            return m;
+        }).toList();
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("records", result.getRecords());
+        data.put("records", rows);
         data.put("total", result.getTotal());
         return R.ok(data);
     }
